@@ -14,3 +14,5 @@ GEMINI.md
 AGENTS.md
 .omc/
 .pytest_cache/
+download-catalog.json
+download-catalog.tmp

@@ -3,6 +3,10 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+import shutil
+import tarfile
+import tempfile
 from typing import Dict, List
 import zipfile
 
@@ -27,6 +31,8 @@ class Llamacpp:
         version: str,
         gpu: str,
         require_cuda: bool,
+        download_links=None,
+        cudart=None,
     ):
         self.repo = repo
         self.version = version
@@ -34,10 +40,11 @@ class Llamacpp:
         self.filename = filename
         self.require_cuda = require_cuda
         github_repo = f"https://github.com/{repo}/{filename}"
-        self.download_links = {
+        self.download_links = download_links or {
             "GHProxy": f"https://{GHPROXY_URL}/" + github_repo,
             "GitHub": github_repo,
         }
+        self.cudart = cudart
 
 
 class LlamacppList(QObject):
@@ -67,6 +74,8 @@ class LlamacppList(QObject):
                 version=obj["version"],
                 gpu=obj["gpu"],
                 require_cuda=obj["require_cuda"],
+                download_links=obj.get("download_links"),
+                cudart=obj.get("cudart"),
             )
             llamacpp_list.append(llamacpp)
         self._list = llamacpp_list
@@ -81,34 +90,36 @@ LLAMACPP_LIST = LlamacppList()
 
 
 def unzip_llamacpp(folder: str, filename: str):
-    llama_folder = os.path.join(folder, "llama")
-    file_path = os.path.join(folder, filename)
-    print(f"将解压 {filename} 到 {llama_folder}")
+    file_path = Path(folder) / filename
+    destination = Path(folder) / "llama"
+    # 先在同盘暂存并验证，坏压缩包不能损坏正在使用的后端。
+    with tempfile.TemporaryDirectory(prefix="llama-extract-", dir=folder) as temporary:
+        staging = Path(temporary)
 
-    if not os.path.exists(llama_folder):
-        os.mkdir(llama_folder)
+        def validate(name):
+            target = (staging / name).resolve()
+            if not target.is_relative_to(staging.resolve()) or "\\" in name:
+                raise ValueError(f"压缩包包含越界路径：{name}")
 
-    # 解压，如果文件已存在则覆盖
-    if filename.endswith(".zip"):
-        with zipfile.ZipFile(file_path, "r") as zip_ref:
-            zip_ref.extractall(llama_folder)
-        # macOS build 中解压后产生的是'llama/build/bin'文件夹，需要将其中的所有内容移动到llama文件夹下
-        if sys.platform == "darwin":
-            bin_folder = os.path.join(llama_folder, "build", "bin")
-            for item in os.listdir(bin_folder):
-                src_path = os.path.join(bin_folder, item)
-                dst_path = os.path.join(llama_folder, item)
-                os.rename(src_path, dst_path)
-                # 添加执行权限 (755 = rwxr-xr-x)
-                os.chmod(dst_path, 0o755)
-            # 删除空文件夹
-            import shutil
-            shutil.rmtree(os.path.join(llama_folder, "build"))
-    else:
-        print(f"不支持的文件格式: {filename}")
-        return
+        if filename.endswith(".zip"):
+            with zipfile.ZipFile(file_path) as archive:
+                for member in archive.infolist():
+                    validate(member.filename)
+                archive.extractall(staging)
+        elif filename.endswith(".tar.gz"):
+            with tarfile.open(file_path, "r:gz") as archive:
+                for member in archive.getmembers():
+                    validate(member.name)
+                archive.extractall(staging, filter="data")
+        else:
+            raise ValueError(f"不支持的文件格式：{filename}")
 
-    print(f"{filename} 已成功解压到 {llama_folder}")
+        servers = list(staging.rglob("llama-server")) + list(staging.rglob("llama-server.exe"))
+        source = servers[0].parent if len(servers) == 1 else staging
+        shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=True)
+        if sys.platform == "darwin" and (destination / "llama-server").exists():
+            os.chmod(destination / "llama-server", 0o755)
+    logging.info("%s 已成功解压到 %s", filename, destination)
 
 
 def is_cudart_exist(folder: str):

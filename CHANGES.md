@@ -1,5 +1,15 @@
 # 修改记录 — Sakura Launcher GUI
 
+## 开发中 — 动态下载目录
+
+- 模型列表改为发现 SakuraLLM 官方 GGUF 元数据，使用真实文件大小与 SHA-256；不列出需要合并的分片，未编造新模型的显存推荐值。
+- llama.cpp 改为读取官方发行资产，按当前系统与架构展示识别的包；明确标注预发布，每个 CUDA 包绑定同版运行库。
+- 新增手动刷新、后台刷新、便携缓存与分来源离线回退；只刷新目录，不自动下载或升级。
+- 修正完整 HuggingFace 仓库 ID 导致组织名重复、刷新后残留空白行、切换下载源后按钮状态不刷新的问题。
+- 支持官方 macOS tar.gz 后端包；先暂存验证压缩包路径，再安装文件，避免坏包直接破坏现有后端。
+- 相关源码：`src/catalog.py`、`src/section_download.py`、`src/sakura.py`、`src/llamacpp.py`；相关回归测试见 `tests/test_catalog*.py`、`tests/test_gui_catalog.py`、`tests/test_backend_archives.py`。
+- 目前本地非 Qt 测试通过，完整 GUI 测试仍需远端依赖环境执行。本节不是已发布功能清单；v1.2.1 不含上述改动。
+
 ## 2026-11-23 — v1.2.1：新版后端兼容与预设置顶修复
 
 ### 背景与目标

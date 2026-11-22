@@ -3,8 +3,9 @@ from enum import Enum
 import logging
 import os
 import json
+import threading
 import requests
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QObject
 from PySide6.QtWidgets import (
     QApplication,
     QLabel,
@@ -23,6 +24,7 @@ from qfluentwidgets import (
 from .common import CURRENT_DIR, get_resource_path, GHPROXY_URL
 from .llamacpp import *
 from .sakura import SAKURA_LIST, Sakura
+from .catalog import read_cache, refresh_catalog, write_cache
 from .ui import *
 
 
@@ -64,28 +66,54 @@ def UiDownloadButton(on_click):
     return download_button
 
 
-class LoadDataThread(QThread):
-    def run(self):
-        DATA_FILE = "data.json"
-        with open(get_resource_path(DATA_FILE), "r", encoding="utf-8") as f:
-            data_json = json.load(f)
-        SAKURA_LIST.update_sakura_list(data_json)
-        LLAMACPP_LIST.update_llamacpp_list(data_json)
+class LoadDataThread(QObject):
+    sig_loaded = Signal(dict, str)
+    finished = Signal()
 
-        repo = "PiDanShouRouZhouXD/Sakura_Launcher_GUI"
-        for link in [
-            f"https://{GHPROXY_URL}/https://raw.githubusercontent.com/{repo}/refs/heads/main/{DATA_FILE}",
-            f"https://cdn.jsdelivr.net/gh/{repo}@main/{DATA_FILE}",
-            f"https://cdn.rawgit.com/{repo}/refs/heads/main/{DATA_FILE}",
-            f"https://raw.githubusercontent.com/{repo}/refs/heads/main/{DATA_FILE}",
-        ]:
+    def __init__(self, previous, cache_path, parent=None):
+        super().__init__(parent)
+        self.previous = previous
+        self.cache_path = cache_path
+        self.cancelled = threading.Event()
+        self.worker = None
+        QApplication.instance().aboutToQuit.connect(self.cancel)
+
+    def cancel(self):
+        self.cancelled.set()
+
+    def start(self):
+        self.worker = threading.Thread(target=self.run, daemon=True)
+        self.worker.start()
+
+    def isRunning(self):
+        return self.worker is not None and self.worker.is_alive()
+
+    def run(self):
+        # 网络线程不持有 Qt 原生线程生命周期，关窗不会触发 QThread 析构崩溃。
+        try:
+            data, messages = refresh_catalog(self.previous, cancelled=self.cancelled.is_set)
+            if self.cancelled.is_set():
+                return
             try:
-                data_json = requests.get(link, timeout=1).json()
-                SAKURA_LIST.update_sakura_list(data_json)
-                LLAMACPP_LIST.update_llamacpp_list(data_json)
-                break
-            except Exception as e:
-                logging.warning(f"获取远程数据失败: {link} {e}")
+                write_cache(self.cache_path, data)
+            except OSError as exc:
+                messages.append(f"无法写入目录缓存：{exc}")
+            for message in messages:
+                logging.warning(message)
+            status = "官方列表已更新" if not messages else "部分来源更新失败，已保留缓存；详情见日志"
+            self.sig_loaded.emit(data, status)
+        except Exception:
+            logging.exception("下载目录刷新异常")
+            if not self.cancelled.is_set():
+                try:
+                    self.sig_loaded.emit(self.previous, "列表刷新失败，已保留原列表；详情见日志")
+                except RuntimeError:
+                    pass
+        finally:
+            try:
+                self.finished.emit()
+            except RuntimeError:
+                pass  # 窗口销毁后不再投递完成通知。
 
 
 class DownloadTaskState(Enum):
@@ -186,7 +214,47 @@ class DownloadSection(QFrame):
     def __init__(self, title):
         super().__init__()
         self.setObjectName(title.replace(" ", "-"))
+        self.refresh_buttons = []
+        self.catalog_labels = []
+        self.catalog_thread = None
+        self.cache_path = os.path.join(CURRENT_DIR, "download-catalog.json")
+        with open(get_resource_path("data.json"), encoding="utf-8") as stream:
+            bundled = json.load(stream)
+        self.catalog_data = read_cache(self.cache_path, bundled)
         self.init_ui()
+
+    def _catalog_controls(self):
+        label = QLabel("正在加载下载列表")
+        button = TransparentPushButton(FIF.SYNC, "刷新列表")
+        button.clicked.connect(self.start_catalog_refresh)
+        self.catalog_labels.append(label)
+        self.refresh_buttons.append(button)
+        return UiRow(label, None, button)
+
+    def apply_catalog(self, data, status):
+        self.catalog_data = data
+        SAKURA_LIST.update_sakura_list(data)
+        LLAMACPP_LIST.update_llamacpp_list(data)
+        for label in self.catalog_labels:
+            label.setText(status)
+
+    def start_catalog_refresh(self):
+        if self.catalog_thread is not None and self.catalog_thread.isRunning():
+            return
+        for button in self.refresh_buttons:
+            button.setEnabled(False)
+        for label in self.catalog_labels:
+            label.setText("正在查询官方列表，当前条目仍可使用…")
+        self.catalog_thread = LoadDataThread(self.catalog_data, self.cache_path, self)
+        self.catalog_thread.sig_loaded.connect(self.apply_catalog)
+        self.catalog_thread.finished.connect(self._catalog_finished)
+        self.catalog_thread.finished.connect(self.catalog_thread.deleteLater)
+        self.catalog_thread.start()
+
+    def _catalog_finished(self):
+        self.catalog_thread = None
+        for button in self.refresh_buttons:
+            button.setEnabled(True)
 
     def init_ui(self):
         self.setLayout(
@@ -196,7 +264,8 @@ class DownloadSection(QFrame):
                 ("下载进度", self._create_download_progress_section()),
             ),
         )
-        LoadDataThread(self).start()
+        self.apply_catalog(self.catalog_data, "已加载缓存或内置列表")
+        self.start_catalog_refresh()
 
     def refresh_sakura_table(self, sakura_list):
         table = self.sakura_table
@@ -207,9 +276,8 @@ class DownloadSection(QFrame):
             return button
 
         table.clearContents()
+        table.setRowCount(len(sakura_list))
         for row, sakura in enumerate(sakura_list):
-            if table.rowCount() <= row:
-                table.insertRow(row)
             table.setItem(row, 0, UiTableLabel(sakura.filename))
             table.setItem(row, 1, UiTableLabel(f"{sakura.size}GB"))
             table.setCellWidget(row, 2, create_button(sakura))
@@ -230,7 +298,7 @@ class DownloadSection(QFrame):
         description = UiDescription(
             """
         <p>您可以在这里下载不同版本的模型，模型会保存到启动器所在的目录。如果启动器无法下载，您也可以手动从<a href="https://huggingface.co/SakuraLLM/">Hugging Face镜像站</a>下载模型，将下载的gguf文件放到启动器所在文件夹下即可。</p>
-        <p>翻译Galgame推荐使用7B模型，12G以下显存可用。翻译小说推荐使用14B模型，需要12G及以上显存。</p>
+        <p>列表从 SakuraLLM 官方仓库刷新，仅列出具有校验值的单文件 GGUF；断网时使用缓存或内置列表。模型规模、量化和上下文都会影响显存占用，请按模型说明选择，刷新不会自动下载文件。</p>
         """
         )
 
@@ -238,6 +306,7 @@ class DownloadSection(QFrame):
             description,
             UiHLine(),
             comboBox,
+            self._catalog_controls(),
             self.sakura_table,
         )
 
@@ -251,9 +320,9 @@ class DownloadSection(QFrame):
             return button
 
         table.clearContents()
-        for row, llamacpp in enumerate(LLAMACPP_LIST):
-            if table.rowCount() <= row:
-                table.insertRow(row)
+        rows = list(LLAMACPP_LIST)
+        table.setRowCount(len(rows))
+        for row, llamacpp in enumerate(rows):
             table.setItem(row, 0, UiTableLabel(llamacpp.version))
             table.setItem(row, 1, UiTableLabel(llamacpp.gpu))
             table.setCellWidget(row, 2, create_button(llamacpp=llamacpp))
@@ -266,6 +335,7 @@ class DownloadSection(QFrame):
 
         def on_src_change(text):
             self.llamacpp_download_src = text
+            self.refresh_llamacpp_table()
 
         select_download_src = UiRow(
             QLabel("下载源"),
@@ -283,14 +353,10 @@ class DownloadSection(QFrame):
         description = UiDescription(
             """
         <p>
-        下载的llama.cpp会解压到启动器所在的目录，如果存在旧版本，会自动覆盖。你也可以手动从<a href="https://github.com/ggerganov/llama.cpp/releases">GitHub发布页面</a>下载发行版。
-        intel ARC用户请参考<a href="https://github.com/intel-analytics/ipex-llm/blob/main/docs/mddocs/Quickstart/llama_cpp_quickstart.md">这篇文档</a>来手动安装，在启动器指定软链接路径<b>可能</b>可以使用。
-        Vulkan版本现在还不支持IQ系列的量化。
+        列表从<a href="https://github.com/ggml-org/llama.cpp/releases">llama.cpp 官方发行页</a>刷新，仅显示匹配当前系统和架构的已识别包；每日构建会明确标注预发布。
+        下载后会安装到启动器目录下的 llama 文件夹，可能覆盖旧版，请先停止服务。CUDA 版本会同时下载对应版本的运行库。
+        刷新列表不会自动安装后端；显卡、驱动与量化兼容范围请以对应发行说明为准。
         </p>
-        <p><b>HIP支持的AMD大多数独显型号</b></p>
-        <ul>
-            <li>RX 7900 / 7800 / 7700 / 6900 / 6800 / 6700系列显卡</li>
-        </ul>
         """
         )
 
@@ -299,6 +365,7 @@ class DownloadSection(QFrame):
             UiHLine(),
             select_download_src,
             current_version_hint,
+            self._catalog_controls(),
             self.llamacpp_table,
         )
 
@@ -373,9 +440,9 @@ class DownloadSection(QFrame):
 
         self._start_download_task(task, on_finish=on_download_sakura_finish)
 
-    def start_download_cudart(self):
+    def start_download_cudart(self, cudart=None):
         src = self.llamacpp_download_src
-        cudart = LLAMACPP_LIST.CUDART
+        cudart = cudart or LLAMACPP_LIST.CUDART
         task = DownloadTask(
             name="CUDA-RT",
             url=cudart["download_links"][src],
@@ -423,8 +490,8 @@ class DownloadSection(QFrame):
 
         self._start_download_task(task, on_finish=on_download_llamacpp_finish)
 
-        if llamacpp.require_cuda and not is_cudart_exist(CURRENT_DIR):
-            self.start_download_cudart()
+        if llamacpp.require_cuda:
+            self.start_download_cudart(llamacpp.cudart)
 
     def start_download_launcher(self, version: str):
         filename = f"Sakura_Launcher_GUI_{version}.exe"

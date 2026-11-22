@@ -42,13 +42,16 @@ class Sakura:
         self.base_model_hf = base_model_hf
         self.bpw = bpw
         self.config_cache = config_cache
+        repo_id = "SakuraLLM/" + repo.removeprefix("SakuraLLM/")
         self.download_links = {
-            "HFMirror": f"https://hf-mirror.com/SakuraLLM/{repo}/resolve/main/{filename}",
-            "HuggingFace": f"https://huggingface.co/SakuraLLM/{repo}/resolve/main/{filename}",
+            "HFMirror": f"https://hf-mirror.com/{repo_id}/resolve/main/{filename}",
+            "HuggingFace": f"https://huggingface.co/{repo_id}/resolve/main/{filename}",
         }
 
     def to_model_config(self, context: int = 8192) -> ModelConfig:
         """转换为 ModelCalculator 可用的配置"""
+        if self.bpw is None or (not self.base_model_hf and not self.config_cache):
+            raise ValueError("该模型尚无可靠的显存评估元数据，请手动配置运行参数")
         return ModelConfig(
             hf_model=self.base_model_hf,
             context=context,
