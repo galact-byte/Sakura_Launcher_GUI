@@ -41,6 +41,7 @@
 
 ### 已知限制与后续
 - 当前 Python 环境缺少项目已有的 `qfluentwidgets`、`wmi` 依赖；不在本机安装新依赖，完整 Qt 交互测试和打包交由 GitHub Actions 执行。
+- 首轮远端完整 Qt 测试发现新版 PySide6 不接受 `QTableWidgetItem(existing_item)`，已改为交换原始表格项，避免复制构造异常；该失败通过真实长按测试捕获。
 - 本地完整 Qt 交互测试会标记跳过，不能把它计为本机通过；发布以远端测试和构建成功为前提。
 - 现用 `Sakura_Launcher_GUI_v1.2.0-beta.exe` 不会因修改源码自动更新，需要下载 Release 资产后替换。
 - 旧后端分支通过回归测试覆盖，未重新下载旧二进制进行实机加载测试。

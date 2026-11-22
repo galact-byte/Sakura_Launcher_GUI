@@ -142,9 +142,10 @@ class ConfigEditor(TableWidget):
         for col in range(self.columnCount()):
             item1 = self.takeItem(row1, col)
             item2 = self.takeItem(row2, col)
-            if item1 and item2:
-                self.setItem(row1, col, QTableWidgetItem(item2))
-                self.setItem(row2, col, QTableWidgetItem(item1))
+            if item2 is not None:
+                self.setItem(row1, col, item2)
+            if item1 is not None:
+                self.setItem(row2, col, item1)
 
     def delete_row(self, row):
         self.removeRow(row)
