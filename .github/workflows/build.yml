@@ -13,6 +13,11 @@ on:
         required: true
         type: string
         default: "v1.2.1"
+      test_only:
+        description: "仅运行回归测试，不打包或发布"
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -48,12 +53,14 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Build
+        if: ${{ !inputs.test_only }}
         shell: powershell
         run: |
           pyinstaller --clean --noconfirm main.spec
           Rename-Item -Path "dist\main.exe" -NewName "Sakura_Launcher_GUI_$('${{ github.sha }}'.Substring(0,7)).exe"
 
       - name: Upload artifacts
+        if: ${{ !inputs.test_only }}
         uses: actions/upload-artifact@v4
         with:
           name: windows_dist
@@ -84,11 +91,13 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Build
+        if: ${{ !inputs.test_only }}
         run: |
           pyinstaller --clean --noconfirm main.spec
           ditto -c -k --sequesterRsrc --keepParent dist/SakuraLauncher.app "dist/Sakura_Launcher_GUI_macOS_${GITHUB_SHA:0:7}.zip"
 
       - name: Upload artifacts
+        if: ${{ !inputs.test_only }}
         uses: actions/upload-artifact@v4
         with:
           name: macos_dist
@@ -96,7 +105,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.create_release
+    if: github.event_name == 'workflow_dispatch' && inputs.create_release && !inputs.test_only
     needs: [windows-latest, macos-latest]
     runs-on: ubuntu-latest
     permissions:

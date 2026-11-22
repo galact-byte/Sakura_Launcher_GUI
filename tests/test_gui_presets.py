@@ -11,6 +11,40 @@ class GuiPresetTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_delete_buttons_follow_current_rows_after_deletion(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from src.section_settings import ConfigEditor
+
+        table = ConfigEditor()
+        try:
+            table.set_config([{"name": name, "config": {"name": name}}
+                              for name in ["first", "second", "third"]])
+            table.delete_row(0)
+            QTest.mouseClick(table.cellWidget(0, 3), Qt.MouseButton.LeftButton)
+            self.assertEqual([item["name"] for item in table.get_config()], ["third"])
+        finally:
+            table.close()
+            table.deleteLater()
+            self.app.processEvents()
+
+    def test_move_buttons_follow_current_rows_after_deletion(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from src.section_settings import ConfigEditor
+
+        table = ConfigEditor()
+        try:
+            table.set_config([{"name": name, "config": {"name": name}}
+                              for name in ["first", "second", "third"]])
+            table.delete_row(0)
+            QTest.mouseClick(table.cellWidget(0, 2), Qt.MouseButton.LeftButton)
+            self.assertEqual([item["name"] for item in table.get_config()], ["third", "second"])
+        finally:
+            table.close()
+            table.deleteLater()
+            self.app.processEvents()
+
     def test_long_press_up_button_moves_preset_to_top(self):
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
