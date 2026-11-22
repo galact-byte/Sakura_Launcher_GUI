@@ -2,6 +2,7 @@ import importlib.util
 import logging
 import os
 import unittest
+from unittest.mock import patch
 
 
 @unittest.skipUnless(importlib.util.find_spec("qfluentwidgets"), "完整 Qt 交互测试由远端依赖环境执行")
@@ -18,7 +19,8 @@ class GuiSettingsTests(unittest.TestCase):
 
         root = logging.getLogger()
         level = root.level
-        widget = SettingsSection("settings-test")
+        with patch.object(SettingsSection, "check_launcher_update"):
+            widget = SettingsSection("settings-test")
         try:
             logging.getLogger("sakura-regression").warning("LOG-VIEW-REGRESSION")
             self.app.processEvents()

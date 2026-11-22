@@ -15,15 +15,15 @@ def get_nvidia_gpus() -> List[GPUInfo]:
     nvidia_gpu_info: List[GPUInfo] = []
 
     try:
-        cmd = "nvidia-smi --query-gpu=name,pci.bus_id,memory.free,memory.total --format=csv,noheader"
+        cmd = ["nvidia-smi", "--query-gpu=index,uuid,name,pci.bus_id,memory.free,memory.total", "--format=csv,noheader"]
         if DEBUG_BUILD:
             logging.debug(f"执行命令: {cmd}")
             
         result = subprocess.run(
             cmd,
-            shell=True,
             capture_output=True,
             text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             output = result.stdout.splitlines()
@@ -32,7 +32,9 @@ def get_nvidia_gpus() -> List[GPUInfo]:
                 
             for i, row in enumerate(csv.reader(output, delimiter=",")):
                 try:
-                    name, pci_bus_id, vram_free, vram_total = row
+                    index, uuid, name, pci_bus_id, vram_free, vram_total = row
+                    index = int(index.strip())
+                    uuid = uuid.strip()
                     name = name.strip()
                     pci_bus_id = pci_bus_id.strip()
 
@@ -45,12 +47,13 @@ def get_nvidia_gpus() -> List[GPUInfo]:
                                      f"可用显存={vram_free}MiB, 总显存={vram_total}MiB")
 
                     gpu_info = GPUInfo(
-                        index = None,
+                        index = index,
                         name = name,
                         gpu_type=GPUType.NVIDIA,
                         dedicated_gpu_memory=MiBToBytes(vram_total),
                         avail_dedicated_gpu_memory=MiBToBytes(vram_free),
                         pci_bus_id=pci_bus_id,
+                        uuid=uuid if uuid.startswith("GPU-") else None,
                     )
 
                     nvidia_gpu_info.append(gpu_info)

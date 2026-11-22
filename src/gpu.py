@@ -20,7 +20,7 @@ class GPUDisplayHelper:
     @staticmethod
     def create_display_name(gpu_info: GPUInfo, index: int) -> str:
         """创建GPU的显示名称"""
-        return f"{gpu_info.name} (GPU {index})" if gpu_info.pci_bus_id else gpu_info.name
+        return f"{gpu_info.name} (GPU {index})" if index is not None else gpu_info.name
     
     @staticmethod
     def parse_display_name(display_name: str) -> tuple[str, int|None]:
@@ -51,10 +51,11 @@ class GPUDisplayHelper:
                 matching_keys.append(key)
         
         # 如果找到多个匹配的GPU，使用索引选择
-        if matching_keys:
-            if gpu_index is not None and gpu_index < len(matching_keys):
-                return matching_keys[gpu_index]
-            # 如果没有索引或索引无效，返回第一个匹配的
+        if gpu_index is not None:
+            for key in matching_keys:
+                if gpu_info_map[key].index == gpu_index:
+                    return key
+        if len(matching_keys) == 1:
             return matching_keys[0]
         
         return None
@@ -63,6 +64,7 @@ class GPUDisplayHelper:
     def match_gpu_name(display_name: str, target_name: str) -> bool:
         """检查目标名称是否匹配显示名称"""
         gpu_name, _ = GPUDisplayHelper.parse_display_name(display_name)
+        target_name, _ = GPUDisplayHelper.parse_display_name(target_name)
         return target_name in gpu_name
 
 class GPUManager:
@@ -75,25 +77,9 @@ class GPUManager:
             logging.info("GPU管理器初始化 (DEBUG模式)")
         self.detect_gpus()
 
-    @staticmethod
-    def get_gpu_index_from_pci(pci_bus_id: str) -> int:
-        """从 PCI 总线 ID 中提取设备号作为 GPU 索引"""
-        try:
-            # PCI 总线 ID 格式为 "00000000:01:00.0"，我们提取设备号（01）作为索引
-            if pci_bus_id and ":" in pci_bus_id:
-                device_id = pci_bus_id.split(":")[1]
-                index = int(device_id, 16)  # 将十六进制设备号转换为十进制
-                if DEBUG_BUILD:
-                    logging.debug(f"从PCI总线ID '{pci_bus_id}' 提取设备号: {index}")
-                return index
-        except (IndexError, ValueError) as e:
-            logging.warning(f"无法从PCI总线ID提取设备号: {pci_bus_id}, 错误: {e}")
-        return 0
-
     def __add_gpu_to_list(self, gpu_info: GPUInfo):
         if gpu_info.gpu_type == GPUType.NVIDIA:
-            # 直接从 PCI 总线 ID 获取 GPU 索引
-            gpu_index = self.get_gpu_index_from_pci(gpu_info.pci_bus_id) if gpu_info.pci_bus_id else len(self.nvidia_gpus)
+            gpu_index = gpu_info.index
             display_name = GPUDisplayHelper.create_display_name(gpu_info, gpu_index)
             self.nvidia_gpus.append(display_name)
             if DEBUG_BUILD:
@@ -111,8 +97,10 @@ class GPUManager:
         ''' Detect NVIDIA GPUs using nvidia-smi '''
         if DEBUG_BUILD:
             logging.debug("开始检测NVIDIA GPU (通用方法)")
-        self.nvidia_gpus = []
         nvidia_gpu_info = get_nvidia_gpus()
+        if not nvidia_gpu_info:
+            return
+        self.nvidia_gpus = []
         
         if DEBUG_BUILD and nvidia_gpu_info:
             logging.debug(f"检测到 {len(nvidia_gpu_info)} 个NVIDIA GPU")
@@ -121,8 +109,7 @@ class GPUManager:
         for gpu_info in nvidia_gpu_info:
             # 使用 pci_bus_id 作为唯一标识符
             gpu_key = gpu_info.pci_bus_id if gpu_info.pci_bus_id else gpu_info.name
-            # 直接从 PCI 总线 ID 获取 GPU 索引
-            gpu_index = self.get_gpu_index_from_pci(gpu_info.pci_bus_id) if gpu_info.pci_bus_id else len(self.nvidia_gpus)
+            gpu_index = gpu_info.index
             display_name = GPUDisplayHelper.create_display_name(gpu_info, gpu_index)
             self.nvidia_gpus.append(display_name)
             
@@ -184,7 +171,7 @@ class GPUManager:
 
                 dedicated_gpu_memory = adapter.MemorySize
                 # 使用 pci_bus_id 作为唯一标识符
-                gpu_key = adapter.pci_bus_id if hasattr(adapter, 'pci_bus_id') else name
+                gpu_key = getattr(adapter, 'pci_bus_id', None) or name
                 if gpu_key not in self.gpu_info_map:
                     gpu_info = GPUInfo(
                         index=None,
@@ -373,10 +360,14 @@ class GPUManager:
             
         gpu_info = self.gpu_info_map[gpu_key]
         if gpu_info.gpu_type == GPUType.NVIDIA:
-            env["CUDA_VISIBLE_DEVICES"] = str(selected_index)
+            if gpu_info.uuid:
+                env["CUDA_VISIBLE_DEVICES"] = gpu_info.uuid
+            elif gpu_info.index is not None:
+                env["CUDA_VISIBLE_DEVICES"] = str(gpu_info.index)
+            else:
+                logging.warning("无法确认所选GPU的CUDA标识，保留现有设备可见性设置")
+                return env
             logging.info(f"设置 CUDA_VISIBLE_DEVICES = {env['CUDA_VISIBLE_DEVICES']}")
-            if DEBUG_BUILD:
-                logging.debug(f"为NVIDIA GPU设置环境变量: CUDA_VISIBLE_DEVICES={selected_index}")
         elif gpu_info.gpu_type == GPUType.AMD:
             env["HIP_VISIBLE_DEVICES"] = str((selected_index) - len(self.nvidia_gpus))
             logging.info(f"设置 HIP_VISIBLE_DEVICES = {env['HIP_VISIBLE_DEVICES']}")

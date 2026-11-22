@@ -160,7 +160,9 @@ class LogEmitter(QObject):
 
 
 class LogHandler(logging.Handler):
-    emitter = LogEmitter()
+    def __init__(self):
+        super().__init__()
+        self.emitter = LogEmitter()
 
     def emit(self, record):
         msg = self.format(record)
@@ -169,10 +171,9 @@ class LogHandler(logging.Handler):
 
 class SettingsSection(QFrame):
     sig_need_update = Signal(str)
-    handler = LogHandler()
-
     def __init__(self, title, parent=None):
         super().__init__(parent)
+        self.handler = LogHandler()
         self.setObjectName(title.replace(" ", "-"))
         self._init_ui()
 
@@ -275,11 +276,10 @@ class SettingsSection(QFrame):
         log_display = TextEdit()
         log_display.setReadOnly(True)
 
-        def append_log(msg):
-            log_display.append(msg)
-            log_display.ensureCursorVisible()
-
-        self.handler.emitter.sig.connect(append_log, Qt.UniqueConnection)
+        self.handler.emitter.sig.connect(log_display.append)
+        self.handler.emitter.sig.connect(log_display.ensureCursorVisible)
+        handler = self.handler
+        self.destroyed.connect(lambda: logger.removeHandler(handler))
         self.handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
 
         def clear_log():
