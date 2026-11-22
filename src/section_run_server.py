@@ -34,6 +34,7 @@ class RunServerSection(QFrame):
         self.load_presets(SETTING.presets)
 
         SETTING.model_sort_option_changed.connect(self.refresh_models)
+        SETTING.model_search_paths_changed.connect(self.refresh_models)
 
     def _init_ui(self):
         menu_base = self._create_menu_base()

@@ -3,6 +3,7 @@ from enum import Enum
 import logging
 import os
 import json
+import sys
 import threading
 import requests
 from PySide6.QtCore import Qt, Signal, QThread, QObject
@@ -19,9 +20,12 @@ from qfluentwidgets import (
     TransparentPushButton,
     ProgressBar,
     InfoBar,
+    MessageBox,
 )
 
-from .common import CURRENT_DIR, get_resource_path, GHPROXY_URL
+from .common import CURRENT_DIR, get_resource_path, GHPROXY_URL, LAUNCHER_REPOSITORY
+from .downloads import download_file
+from .setting import SETTING
 from .llamacpp import *
 from .sakura import SAKURA_LIST, Sakura
 from .catalog import read_cache, refresh_catalog, write_cache
@@ -128,81 +132,48 @@ class DownloadTask:
     url: str
     filename: str
     state: DownloadTaskState = DownloadTaskState.RUNNING
+    directory: str = ""
+    expected_sha256: str = ""
+
+    @property
+    def path(self):
+        return os.path.join(self.directory or CURRENT_DIR, self.filename)
 
 
-class DownloadThread(QThread):
+class DownloadThread(QObject):
     sig_progress = Signal(int)
     sig_success = Signal()
     sig_error = Signal(str)
 
-    def __init__(self, url, filename):
+    def __init__(self, url, filename, expected_sha256=""):
         super().__init__()
         self.url = url
         self.filename = filename
-        self._is_finished = False
+        self.expected_sha256 = expected_sha256
+        self.cancelled = threading.Event()
+        self.worker = None
+        QApplication.instance().aboutToQuit.connect(self.stop)
+
+    def start(self):
+        self.worker = threading.Thread(target=self.run, daemon=True)
+        self.worker.start()
 
     def run(self):
         try:
-            logging.info(f"开始下载: {self.url} => {self.filename}")
-            response = requests.get(self.url, stream=True)
-            response.raise_for_status()
-
-            total_size = int(response.headers.get("content-length", 0))
-            block_size = 1024  # 1 KB
-            downloaded_size = 0
-
-            file_path = os.path.join(CURRENT_DIR, self.filename)
-            with open(file_path, "wb") as file:
-                for data in response.iter_content(block_size):
-                    size = file.write(data)
-                    downloaded_size += size
-                    if total_size > 0:
-                        progress = int((downloaded_size / total_size) * 100)
-                        self.sig_progress.emit(progress)
-
-            logging.info(f"下载完成: {self.filename}")
-
-            if not self._is_finished:
-                self._is_finished = True
+            download_file(self.url, self.filename, self.sig_progress.emit,
+                          self.expected_sha256, self.cancelled.is_set)
+            if not self.cancelled.is_set():
                 self.sig_success.emit()
-        except requests.RequestException as e:
-            error_msg = f"下载出错: {str(e)}"
-            logging.info(error_msg)
-            self.sig_error.emit(error_msg)
-        except IOError as e:
-            error_msg = f"文件写入错误: {str(e)}"
-            logging.info(error_msg)
-            self.sig_error.emit(error_msg)
-        except Exception as e:
-            error_msg = f"未知错误: {str(e)}"
-            logging.info(error_msg)
-            self.sig_error.emit(error_msg)
-
-    def safe_disconnect(self):
-        logging.info("正在断开下载线程的所有信号连接")
-        try:
-            self.sig_progress.disconnect()
-            logging.info("断开 progress 信号")
-        except TypeError:
-            pass
-        try:
-            self.sig_success.disconnect()
-            logging.info("断开 finished 信号")
-        except TypeError:
-            pass
-        try:
-            self.sig_error.disconnect()
-            logging.info("断开 error 信号")
-        except TypeError:
-            pass
-        logging.info("下载线程的所有信号已断开")
+        except Exception as exc:
+            logging.error("下载失败 %s: %s", self.filename, exc)
+            if not self.cancelled.is_set():
+                try:
+                    self.sig_error.emit(str(exc))
+                except RuntimeError:
+                    pass
 
     def stop(self):
-        logging.info("正在停止下载线程")
-        self.terminate()
-        self.wait()
-        self._is_finished = True
-        logging.info("下载线程已停止")
+        self.cancelled.set()
 
 
 class DownloadSection(QFrame):
@@ -215,6 +186,8 @@ class DownloadSection(QFrame):
         super().__init__()
         self.setObjectName(title.replace(" ", "-"))
         self.refresh_buttons = []
+        self.download_tasks = []
+        self.download_threads = []
         self.catalog_labels = []
         self.catalog_thread = None
         self.cache_path = os.path.join(CURRENT_DIR, "download-catalog.json")
@@ -297,7 +270,7 @@ class DownloadSection(QFrame):
 
         description = UiDescription(
             """
-        <p>您可以在这里下载不同版本的模型，模型会保存到启动器所在的目录。如果启动器无法下载，您也可以手动从<a href="https://huggingface.co/SakuraLLM/">Hugging Face镜像站</a>下载模型，将下载的gguf文件放到启动器所在文件夹下即可。</p>
+        <p>您可以在这里下载不同版本的模型，模型保存到设置中的下载文件夹，留空时保存到启动器目录。新下载目录会自动加入模型搜索路径。也可从<a href="https://huggingface.co/SakuraLLM/">Hugging Face镜像站</a>下载模型，将下载的gguf文件放到启动器所在文件夹下即可。</p>
         <p>列表从 SakuraLLM 官方仓库刷新，仅列出具有校验值的单文件 GGUF；断网时使用缓存或内置列表。模型规模、量化和上下文都会影响显存占用，请按模型说明选择，刷新不会自动下载文件。</p>
         """
         )
@@ -354,7 +327,7 @@ class DownloadSection(QFrame):
             """
         <p>
         列表从<a href="https://github.com/ggml-org/llama.cpp/releases">llama.cpp 官方发行页</a>刷新，仅显示匹配当前系统和架构的已识别包；每日构建会明确标注预发布。
-        下载后会安装到启动器目录下的 llama 文件夹，可能覆盖旧版，请先停止服务。CUDA 版本会同时下载对应版本的运行库。
+        下载文件夹可在设置中更改；后端仍安装到启动器目录下的 llama 文件夹，可能覆盖旧版，请先停止服务。CUDA 版本会同时下载对应版本的运行库。
         刷新列表不会自动安装后端；显卡、驱动与量化兼容范围请以对应发行说明为准。
         </p>
         """
@@ -382,36 +355,58 @@ class DownloadSection(QFrame):
                     content="",
                     parent=self,
                 )
-                return
+                return False
 
+        new_task.directory = os.path.abspath(SETTING.download_path or CURRENT_DIR)
+        if os.path.exists(new_task.path):
+            if not MessageBox("替换已有文件", f"下载并校验成功后将替换：\n{new_task.path}", self).exec():
+                return False
         self.download_tasks.append(new_task)
 
         progress_bar = ProgressBar()
+        status_label = QLabel("下载中")
+        cancel_button = PushButton("取消下载")
         self.download_progress_layout.insertLayout(
             0,
             UiCol(
                 QLabel(f"<b>{new_task.name}</b>"),
-                QLabel(new_task.filename),
+                QLabel(new_task.path),
                 progress_bar,
+                UiRow(status_label, None, (cancel_button, 0)),
             ),
         )
 
         def on_error(error_message):
             new_task.state = DownloadTaskState.ERROR
+            status_label.setText("下载失败")
+            cancel_button.setEnabled(False)
             logging.error(f"下载失败 {error_message}")
             QApplication.processEvents()  # 确保UI更新
             UiInfoBarError(self, f"{new_task.name}下载失败", content=f"{error_message}")
 
-        thread = DownloadThread(new_task.url, new_task.filename)
+        def on_success():
+            cancel_button.setEnabled(False)
+            on_finish()
+            status_label.setText("完成" if new_task.state == DownloadTaskState.SUCCESS else "处理失败")
+
+        def on_cancel():
+            thread.stop()
+            new_task.state = DownloadTaskState.ERROR
+            status_label.setText("已取消")
+            cancel_button.setEnabled(False)
+
+        thread = DownloadThread(new_task.url, new_task.path, new_task.expected_sha256)
         thread.sig_progress.connect(progress_bar.setValue)
-        thread.sig_success.connect(on_finish)
+        thread.sig_success.connect(on_success)
         thread.sig_error.connect(on_error)
+        cancel_button.clicked.connect(on_cancel)
         thread.start()
 
         self.download_threads.append(thread)
 
         logging.info(f"开始下载: URL={new_task.url}, 文件名={new_task.filename}")
         UiInfoBarSuccess(self, f"{new_task.name}开始下载，请在下载进度页面查看进度")
+        return True
 
     def _update_current_llamacpp_version(self):
         version = get_llamacpp_version(os.path.join(CURRENT_DIR, "llama"))
@@ -426,17 +421,15 @@ class DownloadSection(QFrame):
             name="Sakura模型",
             url=sakura.download_links[src],
             filename=sakura.filename,
+            expected_sha256=sakura.sha256,
         )
 
         def on_download_sakura_finish():
-            file_path = os.path.join(CURRENT_DIR, task.filename)
-            if sakura.check_sha256(file_path):
-                task.state = DownloadTaskState.SUCCESS
-                UiInfoBarSuccess(self, f"{task.name}下载成功")
-            else:
-                task.state = DownloadTaskState.ERROR
-                UiInfoBarError(self, f"{task.name}校验失败")
-                os.remove(file_path)  # 删除校验失败的文件
+            task.state = DownloadTaskState.SUCCESS
+            paths = [path.strip() for path in SETTING.model_search_paths.splitlines() if path.strip()]
+            if task.directory != CURRENT_DIR and task.directory not in paths:
+                SETTING.set_value("model_search_paths", "\n".join(paths + [task.directory]))
+            UiInfoBarSuccess(self, f"{task.name}下载并校验成功")
 
         self._start_download_task(task, on_finish=on_download_sakura_finish)
 
@@ -450,10 +443,10 @@ class DownloadSection(QFrame):
         )
 
         def on_download_cudart_finish():
-            file_path = os.path.join(CURRENT_DIR, task.filename)
+            file_path = task.path
             try:
+                unzip_llamacpp(CURRENT_DIR, file_path)
                 task.state = DownloadTaskState.SUCCESS
-                unzip_llamacpp(CURRENT_DIR, task.filename)
                 UiInfoBarSuccess(self, f"{task.name}下载成功")
             except Exception as e:
                 task.state = DownloadTaskState.ERROR
@@ -474,10 +467,10 @@ class DownloadSection(QFrame):
         )
 
         def on_download_llamacpp_finish():
-            file_path = os.path.join(CURRENT_DIR, task.filename)
+            file_path = task.path
             try:
+                unzip_llamacpp(CURRENT_DIR, file_path)
                 task.state = DownloadTaskState.SUCCESS
-                unzip_llamacpp(CURRENT_DIR, task.filename)
                 UiInfoBarSuccess(self, f"{task.name}下载成功")
                 self._update_current_llamacpp_version()
             except Exception as e:
@@ -488,14 +481,15 @@ class DownloadSection(QFrame):
                 if os.path.exists(file_path):
                     os.remove(file_path)
 
-        self._start_download_task(task, on_finish=on_download_llamacpp_finish)
+        started = self._start_download_task(task, on_finish=on_download_llamacpp_finish)
 
-        if llamacpp.require_cuda:
+        if started is not False and llamacpp.require_cuda:
             self.start_download_cudart(llamacpp.cudart)
 
     def start_download_launcher(self, version: str):
-        filename = f"Sakura_Launcher_GUI_{version}.exe"
-        url = f"https://github.com/PiDanShouRouZhouXD/Sakura_Launcher_GUI/releases/download/{version}/{filename}"
+        filename = (f"Sakura_Launcher_GUI_macOS_{version}.zip" if sys.platform == "darwin"
+                    else f"Sakura_Launcher_GUI_{version}.exe")
+        url = f"https://github.com/{LAUNCHER_REPOSITORY}/releases/download/{version}/{filename}"
         if self.llamacpp_download_src == "GHProxy":
             url = f"https://{GHPROXY_URL}/" + url
 

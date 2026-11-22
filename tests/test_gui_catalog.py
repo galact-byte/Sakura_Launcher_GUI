@@ -72,6 +72,32 @@ class GuiCatalogTests(unittest.TestCase):
         self.assertIn("失败", results[0][1])
         self.assertEqual(finished, [True])
 
+    def test_cancel_button_stops_worker_and_marks_task(self):
+        from qfluentwidgets import PushButton
+        from src.setting import SETTING
+        task = self.module.DownloadTask("test model", "https://example.com/model.gguf", "model.gguf")
+        with patch.object(SETTING, "download_path", self.temporary.name), patch.object(self.module.DownloadThread, "start"):
+            self.widget._start_download_task(task, lambda: None)
+        worker = self.widget.download_threads[-1]
+        button = next(button for button in self.widget.findChildren(PushButton) if button.text() == "取消下载")
+        button.click()
+        self.assertTrue(worker.cancelled.is_set())
+        self.assertEqual(task.state, self.module.DownloadTaskState.ERROR)
+        self.assertFalse(button.isEnabled())
+
+    def test_selected_download_directory_is_used_for_model_and_checksum(self):
+        from types import SimpleNamespace
+        from src.setting import SETTING
+        target = Path(self.temporary.name) / "selected models"
+        model = SimpleNamespace(filename="model.gguf", sha256="a" * 64,
+                                download_links={self.widget.sakura_download_src: "https://example.com/model.gguf"})
+        with patch.object(SETTING, "download_path", str(target), create=True), patch.object(self.module.DownloadThread, "start"):
+            self.widget.start_download_sakura(model)
+        worker = self.widget.download_threads[-1]
+        self.assertEqual(Path(worker.filename), target / "model.gguf")
+        self.assertEqual(worker.expected_sha256, "a" * 64)
+        self.widget.download_tasks.clear()
+
     def test_cuda_download_uses_runtime_attached_to_selected_backend(self):
         from src.llamacpp import Llamacpp
         runtime = {"filename": "cuda13.zip", "download_links": {"GitHub": "https://github.com/example/cuda13.zip"}}

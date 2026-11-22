@@ -10,6 +10,7 @@ CONFIG_FILE = os.path.join(CURRENT_DIR, "sakura-launcher_config.json")
 class Setting(QObject):
     llamacpp_path = ""
     model_search_paths = ""
+    download_path = ""
     model_sort_option = "修改时间"
     remember_window_state = False
     remember_advanced_state = False
@@ -25,6 +26,7 @@ class Setting(QObject):
     # 各个属性的专用信号
     llamacpp_path_changed = Signal(str)
     model_search_paths_changed = Signal(str)
+    download_path_changed = Signal(str)
     model_sort_option_changed = Signal(str)
     remember_window_state_changed = Signal(bool)
     remember_advanced_state_changed = Signal(bool)
@@ -45,6 +47,7 @@ class Setting(QObject):
         for sig in [
             self.llamacpp_path_changed,
             self.model_search_paths_changed,
+            self.download_path_changed,
             self.model_sort_option_changed,
             self.remember_window_state_changed,
             self.remember_advanced_state_changed,
@@ -95,6 +98,7 @@ class Setting(QObject):
         settings = {
             "llamacpp_path": self.llamacpp_path,
             "model_search_paths": self.model_search_paths,
+            "download_path": self.download_path,
             "model_sort_option": self.model_sort_option,
             "remember_window_state": self.remember_window_state,
             "remember_advanced_state": self.remember_advanced_state,
@@ -115,6 +119,7 @@ class Setting(QObject):
         settings = self._read_settings()
         self.llamacpp_path = settings.get("llamacpp_path", "")
         self.model_search_paths = settings.get("model_search_paths", "")
+        self.download_path = settings.get("download_path", "")
         self.model_sort_option = settings.get("model_sort_option", "修改时间")
         self.remember_window_state = settings.get("remember_window_state", False)
         self.remember_advanced_state = settings.get("remember_advanced_state", False)

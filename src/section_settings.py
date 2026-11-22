@@ -1,6 +1,6 @@
 import logging
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QThread
-from PySide6.QtWidgets import QFrame, QHeaderView, QTableWidgetItem
+from PySide6.QtWidgets import QFrame, QHeaderView, QTableWidgetItem, QFileDialog
 from qfluentwidgets import (
     TextEdit,
     FluentIcon as FIF,
@@ -9,15 +9,16 @@ from qfluentwidgets import (
 )
 import requests
 
-from .common import SAKURA_LAUNCHER_GUI_VERSION
+from .common import SAKURA_LAUNCHER_GUI_VERSION, CURRENT_DIR, LAUNCHER_REPOSITORY
 from .setting import SETTING
 from .ui import *
 
 
 def get_launcher_latest_version():
     response = requests.get(
-        "https://github.com/PiDanShouRouZhouXD/Sakura_Launcher_GUI/releases/latest",
+        f"https://github.com/{LAUNCHER_REPOSITORY}/releases/latest",
         allow_redirects=False,
+        timeout=(10, 15),
     )
     if response.status_code != 302:
         return
@@ -227,6 +228,15 @@ class SettingsSection(QFrame):
         llamacpp_path.textChanged.connect(
             lambda text: SETTING.set_value("llamacpp_path", text)
         )
+        self.download_path_edit = UiLineEdit("留空时下载到启动器目录", SETTING.download_path)
+        self.download_path_edit.setAccessibleName("下载文件夹")
+        self.download_path_edit.textChanged.connect(
+            lambda text: SETTING.set_value("download_path", text.strip())
+        )
+        download_path_row = UiRow(
+            self.download_path_edit,
+            (UiButton("选择文件夹", FIF.FOLDER, self.choose_download_path), 0),
+        )
         model_search_paths = TextEdit()
         model_search_paths.setPlaceholderText(
             "模型搜索路径（每行一个路径，已经默认包含当前目录）"
@@ -246,8 +256,16 @@ class SettingsSection(QFrame):
             no_context_check,
             UiOptionRow("模型列表排序", model_sort_combo),
             UiOptionRow("llama.cpp文件夹", llamacpp_path),
+            UiOptionRow("下载文件夹", download_path_row),
             UiOptionCol("模型搜索路径", model_search_paths),
         )
+
+    def choose_download_path(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "选择下载文件夹", SETTING.download_path or CURRENT_DIR
+        )
+        if folder:
+            self.download_path_edit.setText(folder)
 
     def _create_config_editor_section(self):
         self.config_table = ConfigEditor()

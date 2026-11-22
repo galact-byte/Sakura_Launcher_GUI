@@ -20,7 +20,8 @@ def get_self_path():
 CURRENT_DIR = get_self_path()
 ICON_FILE = "icon.ico"
 GHPROXY_URL = "ghfast.top"
-SAKURA_LAUNCHER_GUI_VERSION = "v1.2.1"
+SAKURA_LAUNCHER_GUI_VERSION = "v1.2.2"
+LAUNCHER_REPOSITORY = "galact-byte/Sakura_Launcher_GUI"
 DEBUG_BUILD = False
 
 processes = []

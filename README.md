@@ -25,6 +25,8 @@
 
  本篇README.md主要面向开发者，如需使用指南，请查看[用户手册](https://github.com/PiDanShouRouZhouXD/Sakura_Launcher_GUI/blob/main/Sakura%20Launcher%20GUI%20%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8C.md)。
 
+本维护版的动态下载、下载目录、预设和启动排障说明见 [维护版使用说明](docs/USAGE.md)，上游问题处理情况见 [Issue 核查清单](docs/UPSTREAM_ISSUES.md)。维护版下载与更新位于 [galact-byte/Sakura_Launcher_GUI](https://github.com/galact-byte/Sakura_Launcher_GUI/releases)。
+
 ## 目录
 
 - [Sakura Launcher GUI](#sakura-launcher-gui)

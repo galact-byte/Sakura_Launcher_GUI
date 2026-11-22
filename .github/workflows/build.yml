@@ -12,7 +12,7 @@ on:
         description: "发布版本标签"
         required: true
         type: string
-        default: "v1.2.1"
+        default: "v1.2.2"
       test_only:
         description: "仅运行回归测试，不打包或发布"
         required: true
@@ -57,7 +57,8 @@ jobs:
         shell: powershell
         run: |
           pyinstaller --clean --noconfirm main.spec
-          Rename-Item -Path "dist\main.exe" -NewName "Sakura_Launcher_GUI_$('${{ github.sha }}'.Substring(0,7)).exe"
+          $version = python -c "from src.common import SAKURA_LAUNCHER_GUI_VERSION; print(SAKURA_LAUNCHER_GUI_VERSION)"
+          Rename-Item -Path "dist\main.exe" -NewName "Sakura_Launcher_GUI_$version.exe"
 
       - name: Upload artifacts
         if: ${{ !inputs.test_only }}
@@ -94,7 +95,8 @@ jobs:
         if: ${{ !inputs.test_only }}
         run: |
           pyinstaller --clean --noconfirm main.spec
-          ditto -c -k --sequesterRsrc --keepParent dist/SakuraLauncher.app "dist/Sakura_Launcher_GUI_macOS_${GITHUB_SHA:0:7}.zip"
+          version=$(python -c "from src.common import SAKURA_LAUNCHER_GUI_VERSION; print(SAKURA_LAUNCHER_GUI_VERSION)")
+          ditto -c -k --sequesterRsrc --keepParent dist/SakuraLauncher.app "dist/Sakura_Launcher_GUI_macOS_${version}.zip"
 
       - name: Upload artifacts
         if: ${{ !inputs.test_only }}
