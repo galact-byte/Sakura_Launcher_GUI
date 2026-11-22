@@ -1,7 +1,10 @@
 import json
+import os
 from PySide6.QtCore import QObject, Signal
 
-CONFIG_FILE = "sakura-launcher_config.json"
+from .common import CURRENT_DIR
+
+CONFIG_FILE = os.path.join(CURRENT_DIR, "sakura-launcher_config.json")
 
 
 class Setting(QObject):

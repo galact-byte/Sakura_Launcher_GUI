@@ -149,6 +149,10 @@ class ConfigEditor(TableWidget):
 
     def delete_row(self, row):
         self.removeRow(row)
+        for current_row in range(row, self.rowCount()):
+            self.setCellWidget(current_row, 1, self.create_move_up_button(current_row))
+            self.setCellWidget(current_row, 2, self.create_move_down_button(current_row))
+            self.setCellWidget(current_row, 3, self.create_delete_button(current_row))
 
 
 class LogEmitter(QObject):

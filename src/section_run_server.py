@@ -393,7 +393,7 @@ class RunServerSection(QFrame):
         SETTING.set_preset(
             preset_name,
             {
-                "custom_command": self.command_template.toPlainText(),
+                "command_template": self.command_template.toPlainText(),
                 "gpu_layers": self.gpu_layers_spinbox.value(),
                 "flash_attention": self.flash_attention_check.isChecked(),
                 "no_mmap": self.no_mmap_check.isChecked(),
@@ -429,14 +429,19 @@ class RunServerSection(QFrame):
             if preset["name"] == preset_name:
                 config = preset["config"]
 
-                self.command_template.setPlainText(config.get("command_template", ""))
-                if self.command_template == "":
-                    cmd1 = config.get("custom_command", "")
-                    cmd2 = config.get("custom_command_append", "")
-                    if cmd1 != "":
-                        self.command_template = "%cmd_raw% " + cmd1
-                    elif cmd2 != "":
-                        self.command_template = "%cmd% " + cmd2
+                template = config.get("command_template")
+                if template is None:
+                    command = config.get("custom_command", "")
+                    append = config.get("custom_command_append", "")
+                    if "%cmd%" in command or "%cmd_raw%" in command:
+                        template = command
+                    elif command:
+                        template = "%cmd_raw% " + command
+                    elif append:
+                        template = "%cmd% " + append
+                    else:
+                        template = ""
+                self.command_template.setPlainText(template)
 
                 self.gpu_layers_spinbox.setValue(config.get("gpu_layers", 200))
                 self.model_path.setCurrentText(config.get("model_path", ""))
