@@ -25,7 +25,9 @@ class GuiSettingsTests(unittest.TestCase):
                 with patch("src.section_settings.QFileDialog.getExistingDirectory", return_value=folder):
                     widget.choose_download_path()
                 self.assertEqual(SETTING.download_path, folder)
-                self.assertIn(folder, Path(setting_module.CONFIG_FILE).read_text(encoding="utf-8"))
+                import json
+                saved = json.loads(Path(setting_module.CONFIG_FILE).read_text(encoding="utf-8"))
+                self.assertEqual(saved["download_path"], folder)
                 with patch("src.section_settings.QFileDialog.getExistingDirectory", return_value=""):
                     widget.choose_download_path()
                 self.assertEqual(SETTING.download_path, folder)
