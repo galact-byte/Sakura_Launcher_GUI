@@ -1,30 +1,38 @@
 name: build
 
 on:
-  workflow_dispatch: # allows manual triggering
+  workflow_dispatch:
     inputs:
       create_release:
-        description: "Create new release"
+        description: "发布 GitHub Release"
         required: true
         type: boolean
+        default: false
+      release_tag:
+        description: "发布版本标签"
+        required: true
+        type: string
+        default: "v1.2.1"
   push:
     branches:
       - main
-    paths: [".github/workflows/build.yml", "main.spec", "**/*.py"]
+    paths: [".github/workflows/build.yml", "main.spec", "requirements.txt", "**/*.py"]
   pull_request:
     types: [opened, synchronize, reopened]
-    paths: ["**/*.py"]
+    paths: [".github/workflows/build.yml", "main.spec", "requirements.txt", "**/*.py"]
+
+permissions:
+  contents: read
 
 jobs:
   windows-latest:
     runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
 
     steps:
       - name: Clone
-        id: checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,34 +40,34 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python Environment
-        id: pyenv
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Test
+        run: python -m unittest discover -s tests -v
+
       - name: Build
-        id: pyinstaller_build
         shell: powershell
         run: |
           pyinstaller --clean --noconfirm main.spec
           Rename-Item -Path "dist\main.exe" -NewName "Sakura_Launcher_GUI_$('${{ github.sha }}'.Substring(0,7)).exe"
 
       - name: Upload artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/main' ) || github.event.inputs.create_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: windows_dist
-          path: dist
+          path: dist/*.exe
+          if-no-files-found: error
 
   macos-latest:
     runs-on: macos-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
 
     steps:
       - name: Clone
-        id: checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -67,21 +75,44 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python Environment
-        id: pyenv
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pillow  # 安装 pillow 以保证图标正常转换
+          python -m pip install pillow
+
+      - name: Test
+        run: python -m unittest discover -s tests -v
 
       - name: Build
-        id: pyinstaller_build
         run: |
           pyinstaller --clean --noconfirm main.spec
-          mv dist/SakuraLauncher.app dist/Sakura_Launcher_GUI_macOS_$(echo $GITHUB_SHA | cut -c1-7).app  # 修改重命名逻辑
+          ditto -c -k --sequesterRsrc --keepParent dist/SakuraLauncher.app "dist/Sakura_Launcher_GUI_macOS_${GITHUB_SHA:0:7}.zip"
 
       - name: Upload artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/main' ) || github.event.inputs.create_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: macos_dist
-          path: dist
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.create_release
+    needs: [windows-latest, macos-latest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --notes-file RELEASE_NOTES.md \
+            artifacts/windows_dist/*.exe artifacts/macos_dist/*.zip

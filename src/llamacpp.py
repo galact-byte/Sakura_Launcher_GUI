@@ -135,9 +135,15 @@ def get_llamacpp_version(llamacpp_path: str):
             timeout=2,
             shell=os.name == "nt",
         )
-        version_output = result.stderr.strip()  # 使用 stderr 而不是 stdout
+        if result.returncode != 0:
+            logging.warning("获取llama.cpp版本失败: %s", result.stderr)
+            return None
+        version_output = "\n".join((result.stdout, result.stderr)).strip()
         logging.info(f"版本输出: {version_output}")
-        version_match = re.search(r"version: (\d+)", version_output)
+        # 新版 version 为语义版本，参数兼容判断需要括号内的 build 编号。
+        version_match = re.search(r"version:[^\r\n]*\bbuild\s+(\d+)\b", version_output)
+        if not version_match:
+            version_match = re.search(r"version:\s*(\d+)(?=\s|\(|$)", version_output)
         if version_match:
             return int(version_match.group(1))
         else:
@@ -147,3 +153,40 @@ def get_llamacpp_version(llamacpp_path: str):
     except Exception as e:
         logging.info(f"获取llama.cpp版本时出错: {str(e)}")
     return None
+
+
+def get_llamacpp_extra_options(llamacpp_path: str, flash_attention: bool, no_mmap: bool):
+    if not (flash_attention or no_mmap):
+        return []
+    exe_extension = ".exe" if sys.platform == "win32" else ""
+    executable_path = os.path.join(llamacpp_path, f"llama-server{exe_extension}")
+    try:
+        result = subprocess.run(
+            [executable_path, "--help"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            logging.warning("无法检测llama.cpp参数，跳过可选参数: %s", result.stderr)
+            return []
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logging.warning("无法检测llama.cpp参数，跳过可选参数: %s", exc)
+        return []
+
+    # 按实际帮助输出检测能力，避免给不同构建猜测参数变更版本。
+    help_output = "\n".join((result.stdout, result.stderr))
+    options = []
+    if flash_attention:
+        flash_option = re.search(r"--flash-attn\b[^\r\n]*", help_output)
+        if flash_option:
+            options.append("-fa")
+            if re.search(r"\[(?:on|off|auto)\b", flash_option.group()):
+                options.append("on")
+        else:
+            logging.warning("当前后端未声明Flash Attention参数，已跳过")
+    if no_mmap:
+        if "--load-mode" in help_output:
+            options.extend(["--load-mode", "none"])
+        elif "--no-mmap" in help_output:
+            options.append("--no-mmap")
+        else:
+            logging.warning("当前后端未声明禁用内存映射参数，已跳过")
+    return options

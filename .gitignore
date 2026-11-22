@@ -9,3 +9,8 @@ sakura-launcher_config.json
 *.log
 cloudflared*
 .DS_Store
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+.omc/
+.pytest_cache/

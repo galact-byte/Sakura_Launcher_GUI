@@ -17,7 +17,7 @@ from qfluentwidgets import (
 )
 
 from src.common import *
-from src.llamacpp import get_llamacpp_version
+from src.llamacpp import get_llamacpp_extra_options, get_llamacpp_version
 from src.gpu import GPUManager
 from src.section_run_server import RunServerSection
 from src.section_download import DownloadSection
@@ -327,12 +327,11 @@ class MainWindow(MSFluentWindow):
                 section.npl_input.text(),
             ]
 
-        if section.flash_attention_check.isChecked():
-            option_extra.append("-fa")
-            if version >= 6325:     # https://github.com/ggml-org/llama.cpp/releases/tag/b6325
-                option_extra.append("on")
-        if section.no_mmap_check.isChecked():
-            option_extra.append("--no-mmap")
+        option_extra += get_llamacpp_extra_options(
+            llamacpp_path,
+            section.flash_attention_check.isChecked(),
+            section.no_mmap_check.isChecked(),
+        )
 
         command = []
         command_template: str = section.command_template.toPlainText().strip()

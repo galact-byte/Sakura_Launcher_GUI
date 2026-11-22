@@ -123,7 +123,7 @@ class ConfigEditor(TableWidget):
             self.move_to(row, row + 1)
 
     def move_to_top(self, row):
-        self.move_to(self, row, 0)
+        self.move_to(row, 0)
 
     def move_to_bottom(self, row):
         self.move_to(row, self.rowCount() - 1)
